@@ -1402,20 +1402,6 @@ const A = {
     render();
     toast(`${itemName(S.plan, it)}을(를) 보류함으로 옮겼어요.`, true);
   },
-  unpark(d) {
-    const p = S.plan,
-      k = p.parked.findIndex(x => x.uid === d.uid);
-    if (k < 0) return;
-    pushUndo();
-    const [x] = p.parked.splice(k, 1);
-    const { reason, fromDay, ...it } = x;
-    it.src = 'user';
-    const pos = insertBest(p, S.di, it);
-    S.openParked = true;
-    dirty();
-    render();
-    toast(`${S.di + 1}일차 ${pos + 1}번째에 넣었어요.`, true);
-  },
   delParked(d) {
     pushUndo();
     S.plan.parked = S.plan.parked.filter(x => x.uid !== d.uid);
@@ -1436,12 +1422,16 @@ const A = {
     const p = S.plan;
     pushUndo();
     p.parked = p.parked.filter(x => x.sid !== d.id);
-    const pos = insertBest(p, S.di, mkItem(d.id, 'user'));
+    const it = mkItem(d.id, 'user'),
+      b = insertSlot(p, S.di, it);
     S.sheet.added.push(d.id);
     dirty();
     const list = document.getElementById('addList');
     if (list) list.innerHTML = addListHTML(S.sheet);
-    toast(`${SPOT[d.id].n}을(를) ${pos + 1}번째에 넣었어요.`, true);
+    toast(
+      b.ok ? `${SPOT[d.id].n}을(를) ${b.k + 1}번째에 넣었어요 · ${fmt(b.arr)} 도착` : slotToast(p, S.di, it, b),
+      true
+    );
   },
   addCustom() {
     const el = document.getElementById('cName'),
@@ -1574,11 +1564,16 @@ $app.addEventListener('change', e => {
     const [it] = day.items.splice(i, 1);
     it.fixed = false;
     cleanModes(p, S.di);
-    const pos = insertBest(p, to, it);
+    const b = insertSlot(p, to, it);
     dirty();
     S.sel = null;
     render();
-    toast(`${itemName(p, it)}을(를) ${to + 1}일차 ${pos + 1}번째로 옮겼어요.`, true);
+    toast(
+      b.ok
+        ? `${itemName(p, it)}을(를) ${to + 1}일차 ${b.k + 1}번째로 옮겼어요 · ${fmt(b.arr)} 도착`
+        : slotToast(p, to, it, b),
+      true
+    );
   }
 });
 let rzT;

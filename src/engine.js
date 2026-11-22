@@ -1268,28 +1268,87 @@ function applyWalk(plan, di, li, sids) {
 
 // 가장 덜 돌아가는 위치에 끼워 넣기
 function insertBest(plan, di, it) {
+  return insertSlot(plan, di, it).k;
+}
+// 하루에 장소를 넣을 가장 좋은 자리 찾기.
+// 자리마다 실제로 넣어 보고 계산해서, 문 닫은 뒤에 나오지 않고(마감 10분 여유) 문 열기 한참 전에 도착하지 않고,
+// 뒤에 있는 다른 장소도 마감을 넘기지 않는 자리 중에 가장 덜 돌아가는 곳을 골라요.
+// 돌려주는 값: { k: 자리, ok: 시간 문제 없음, why: 문제 목록, arr: 도착, dep: 나옴, add: 하루가 늘어나는 분, pushed: 마감을 넘기게 되는 다른 칸 }
+function bestSlot(plan, di, it) {
   const day = plan.days[di],
-    c = computeDay(plan, di),
-    p = itemPt(plan, it);
-  const pts = [c.startPt, ...c.rows.map(r => r.p), c.endPt];
-  let bi = day.items.length,
-    bc = Infinity;
-  const lo = leadingFixed(day);
-  for (let k = lo; k <= day.items.length; k++) {
-    const a = pts[k],
-      b = pts[k + 1];
-    const cost = bestOpt(a, p).min + bestOpt(p, b).min - bestOpt(a, b).min;
-    let pen = 0;
-    const s = it.sid && SPOT[it.sid];
-    if (s && s.b === 'n' && k < day.items.length) pen += 25;
-    if (cost + pen < bc) {
-      bc = cost + pen;
-      bi = k;
+    items = day.items,
+    lo = leadingFixed(day),
+    wd = weekday(day.date);
+  const s = it.sid && SPOT[it.sid];
+  const lateOf = c => {
+    const m = new Map();
+    c.rows.forEach(r => {
+      const x = r.it.sid && SPOT[r.it.sid];
+      if (x && x.to && r.dep > toMin(x.to) + 10) m.set(r.it.uid, r);
+    });
+    return m;
+  };
+  const base = computeDay(plan, di),
+    baseLate = lateOf(base);
+  const closedDay = !!(s && s.cl && s.cl.includes(wd));
+  let best = null;
+  for (let k = lo; k <= items.length; k++) {
+    let c;
+    day.items = [...items.slice(0, k), it, ...items.slice(k)];
+    try {
+      c = computeDay(plan, di);
+    } finally {
+      day.items = items;
     }
+    const r = c.rows.find(x => x.it === it);
+    if (!r) continue;
+    const why = [];
+    let pen = 0;
+    if (closedDay) why.push('closed');
+    if (s && s.to && r.dep > toMin(s.to) + 10) {
+      why.push('late');
+      pen += 300 + (r.dep - toMin(s.to)) * 3;
+    }
+    if (s && s.from && r.arr < toMin(s.from) - 15) {
+      why.push('early');
+      pen += 200 + (toMin(s.from) - r.arr) * 2;
+    }
+    const pushed = [...lateOf(c).values()].filter(x => x.it !== it && !baseLate.has(x.it.uid)).map(x => x.it);
+    if (pushed.length) {
+      why.push('push');
+      pen += 300 * pushed.length;
+    }
+    // 시간이 틀리진 않지만 덜 좋은 자리: 식사 시간대 밖, 밤 명소를 너무 이르게, 하루가 넘침
+    if (it.meal === 'L') pen += outside(r.arr, 690, 810) * 1.2;
+    else if (it.meal === 'D') pen += outside(r.arr, 1080, 1200) * 1.2;
+    if (s && s.b === 'n' && r.arr < 1050) pen += (1050 - r.arr) * 0.5;
+    pen += Math.max(0, Math.max(0, c.over) - Math.max(0, base.over)) * 1.5;
+    const add = c.endArr - base.endArr,
+      score = add + pen;
+    if (!best || score < best.score)
+      best = { k, score, ok: !why.length, why, arr: r.arr, dep: r.dep, add, over: Math.max(0, c.over), pushed };
   }
-  day.items.splice(bi, 0, it);
+  return (
+    best || { k: items.length, score: Infinity, ok: false, why: ['none'], arr: 0, dep: 0, add: 0, over: 0, pushed: [] }
+  );
+}
+// 가장 좋은 자리에 넣고, 그 자리 정보를 돌려줘요
+function insertSlot(plan, di, it) {
+  const b = bestSlot(plan, di, it);
+  plan.days[di].items.splice(b.k, 0, it);
   cleanModes(plan, di);
-  return bi;
+  return b;
+}
+// 자리 문제를 한 문장으로 (화면 안내용)
+function slotWhy(plan, di, it, b) {
+  const s = it.sid && SPOT[it.sid],
+    wd = weekday(plan.days[di].date);
+  if (b.why.includes('closed')) return `${WD[wd]}요일은 쉬는 날이에요`;
+  if (b.why.includes('late')) return `${fmt(b.arr)}에 도착해서 ${s.to}쯤 문 닫기 전에 다 못 봐요`;
+  if (b.why.includes('early')) return `${fmt(b.arr)}에 도착하는데 ${s.from}에 문을 열어요`;
+  if (b.why.includes('push'))
+    return `넣으면 ${b.pushed.map(x => itemName(plan, x)).join(', ')}이(가) 문 닫은 뒤에 도착해요`;
+  return '';
 }
 
 // ---- 교통비·패스 ----
@@ -1432,6 +1491,9 @@ if (typeof module !== 'undefined')
     reorderDay,
     trimDay,
     leadingFixed,
+    bestSlot,
+    insertSlot,
+    slotWhy,
     staysOf,
     nightHotel,
     hotelPt,

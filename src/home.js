@@ -1287,13 +1287,17 @@ Object.assign(A, {
     if (!p) return;
     pushUndo();
     p.parked = p.parked.filter(x => x.sid !== d.id);
-    const pos = insertBest(p, S.di, mkItem(d.id, 'user'));
+    const it = mkItem(d.id, 'user'),
+      b = insertSlot(p, S.di, it);
     dirty();
     if (S.sheet.back && S.sheet.back.type === 'add') {
       S.sheet.back.added = [...(S.sheet.back.added || []), d.id];
     }
     S.keepSheetScroll = true;
     render();
-    toast(`${SPOT[d.id].n}을(를) ${pos + 1}번째에 넣었어요.`, true);
+    toast(
+      b.ok ? `${SPOT[d.id].n}을(를) ${b.k + 1}번째에 넣었어요 · ${fmt(b.arr)} 도착` : slotToast(p, S.di, it, b),
+      true
+    );
   }
 });
