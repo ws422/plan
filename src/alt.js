@@ -11,6 +11,7 @@ const ALT_Q = [
   ['居酒屋', '이자카야', '居酒屋'],
   ['焼肉', '고기', '焼肉'],
   ['カフェ', '카페', 'カフェ'],
+  ['スイーツ', '디저트', 'スイーツ'],
   ['レストラン', '식당 전체', '飲食店すべて']
 ];
 function spName(x) {
@@ -18,6 +19,28 @@ function spName(x) {
 }
 function itName(p, it) {
   return LANG === 'ja' && it.sid ? SPOT[it.sid].j : itemName(p, it);
+}
+// 일정 칸 → 장소 (「카페·디저트 타임」 칸이면 그 자리의 가상 카페)
+function altSpotOf(it) {
+  if (it.sid) return SPOT[it.sid];
+  if (it.snack)
+    return {
+      id: '_snack',
+      n: it.n,
+      j: 'カフェ',
+      lat: it.lat,
+      lng: it.lng,
+      z: it.z || 'city',
+      c: 'cafe',
+      d: '',
+      p: 1,
+      s: it.stay
+    };
+  return null;
+}
+// 간식(카페·디저트) 칸인지
+function isSnackItem(it, s) {
+  return it.meal === 'S' || (!!s && s.c === 'cafe' && !it.meal);
 }
 function isEat(s) {
   return !!s && (s.c === 'food' || s.c === 'cafe' || s.meal);
@@ -30,14 +53,14 @@ function nearSearchUrl(q, pt) {
   return `https://www.google.com/maps/search/${encodeURIComponent(q)}/@${pt.lat.toFixed(5)},${pt.lng.toFixed(5)},16z`;
 }
 function altFind(p, di, it) {
-  const s = SPOT[it.sid],
+  const s = altSpotOf(it),
     day = p.days[di],
     c = computeDay(p, di),
     row = c.rows.find(r => r.it === it);
   const arr = row ? row.arr : 720,
     wd = weekday(day.date),
     mon = Number(day.date.slice(5, 7));
-  const cafeMode = s.c === 'cafe' && !it.meal,
+  const cafeMode = isSnackItem(it, s),
     lunch = it.meal === 'L' || (!it.meal && arr < 900);
   const inPlan = new Set(p.days.flatMap(d => d.items.map(x => x.sid)).filter(Boolean));
   const open = x =>
@@ -52,7 +75,7 @@ function altFind(p, di, it) {
       .map(x => ({ x, d: km(s, x), q: queued(x) }))
       .filter(o => o.d <= R)
       .sort((a, b) => a.q - b.q || a.d - b.d);
-  const eats = pool(x => (cafeMode ? x.c === 'cafe' : x.c === 'food' || x.meal)).slice(0, 6);
+  const eats = pool(x => (cafeMode ? x.menu === 'cafe' || x.menu === 'sweet' : x.c === 'food' || x.meal)).slice(0, 6);
   const cafes = cafeMode ? [] : pool(x => x.c === 'cafe').slice(0, 2);
   return { s, arr, cafeMode, eats, cafes };
 }
@@ -72,7 +95,7 @@ function altCard(o, uid) {
 function altSheetV(sh) {
   const p = S.plan,
     it = p && p.days[S.di].items.find(x => x.uid === sh.uid);
-  if (!it || !it.sid)
+  if (!it || !altSpotOf(it))
     return (
       shHead(L('근처 다른 식당', '近くのほかの店'), '') +
       `<p class="note">${ic('alert')}<span>${L('이 장소를 찾을 수 없어요.', 'この場所が見つかりません。')}</span></p>`
@@ -86,18 +109,29 @@ function altSheetV(sh) {
   const cafes = r.cafes.length
     ? `<h3 class="sec"><span>${L('가볍게 때울 카페', '軽く済ませるならカフェ')}</span></h3><ul class="alts">${r.cafes.map(o => altCard(o, it.uid)).join('')}</ul>`
     : '';
-  return (
-    shHead(
-      L(`근처 다른 ${what}`, `近くのほかの${what}`),
-      L(
-        `「${esc(s.n)}」 웨이팅이 길 때 바로 갈 수 있는 곳이에요. ${fmt(r.arr)}쯤 열려 있는 곳만 골랐어요.`,
-        `「${esc(s.j)}」の待ち時間が長いときにすぐ行ける店です。${fmt(r.arr)}ごろ開いている店だけ選びました。`
+  const head = it.snack
+    ? shHead(
+        L('근처 카페 찾기', '近くのカフェを探す'),
+        L(
+          `${fmt(r.arr)}쯤 쉬어 갈 카페·디저트 가게를 골라요. 고르면 「카페·디저트 타임」이 그 가게로 바뀌어요.`,
+          `${fmt(r.arr)}ごろ休憩するカフェ・スイーツの店を選びます。選ぶと「カフェ・スイーツタイム」がその店に変わります。`
+        )
       )
-    ) +
+    : shHead(
+        L(`근처 다른 ${what}`, `近くのほかの${what}`),
+        L(
+          `「${esc(s.n)}」 웨이팅이 길 때 바로 갈 수 있는 곳이에요. ${fmt(r.arr)}쯤 열려 있는 곳만 골랐어요.`,
+          `「${esc(s.j)}」の待ち時間が長いときにすぐ行ける店です。${fmt(r.arr)}ごろ開いている店だけ選びました。`
+        )
+      );
+  return (
+    head +
     list +
     cafes +
     `<h3 class="sec"><span>${L('구글 지도에서 지금 근처 찾기', 'Googleマップで近くを探す')}</span></h3>
-    <div class="alt-g">${ALT_Q.filter(([q]) => !r.cafeMode || q === 'カフェ' || q === 'レストラン')
+    <div class="alt-g">${ALT_Q.filter(([q]) =>
+      r.cafeMode ? ['カフェ', 'スイーツ', 'レストラン'].includes(q) : q !== 'スイーツ'
+    )
       .map(
         ([q, l, lj]) => `<a href="${nearSearchUrl(q, s)}" target="_blank" rel="noopener">${ic('search')}${L(l, lj)}</a>`
       )
@@ -158,6 +192,8 @@ Object.assign(A, {
         delete it.z;
         delete it.custom;
         delete it.cat;
+        delete it.snack;
+        delete it.a;
         it.src = 'user';
       },
       spName(n)
@@ -173,8 +209,8 @@ Object.assign(A, {
     }
     const p = S.plan,
       it = p.days[S.di].items.find(x => x.uid === d.uid);
-    if (!it || !it.sid) return;
-    const s = SPOT[it.sid];
+    if (!it || !altSpotOf(it)) return;
+    const s = altSpotOf(it);
     altApply(
       p,
       S.di,
@@ -187,6 +223,8 @@ Object.assign(A, {
         it.cat = s.c;
         it.custom = true;
         delete it.sid;
+        delete it.snack;
+        delete it.a;
         it.src = 'user';
       },
       name

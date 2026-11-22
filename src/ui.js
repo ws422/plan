@@ -543,7 +543,9 @@ function itemRow(p, r, i, N) {
       ? '<span class="tag meal">점심</span>'
       : it.meal === 'D'
         ? '<span class="tag meal">저녁</span>'
-        : '',
+        : it.meal === 'S'
+          ? '<span class="tag meal snack">간식</span>'
+          : '',
     it.src === 'walk'
       ? '<span class="tag walk">걷다가 들름</span>'
       : it.src === 'user'
@@ -565,7 +567,17 @@ function itemRow(p, r, i, N) {
       ${
         sel
           ? `<div class="edit">
-        ${isEat(s) ? `<button class="btn alt-btn wide" data-act="altSheet" data-uid="${it.uid}">${ic(s.c === 'cafe' && !it.meal ? 'cafe' : 'food')}<span><b>${s.c === 'cafe' && !it.meal ? L('웨이팅이 길면? 근처 다른 카페 보기', '待ちが長いときは? 近くのほかのカフェ') : L('웨이팅이 길면? 근처 다른 식당 보기', '待ちが長いときは? 近くのほかのお店')}</b><small>${L('걸어서 갈 수 있는 곳 · 구글 지도에서 찾기', '歩いて行ける店 · Googleマップで探す')}</small></span>${ic('next', 'chev')}</button>` : ''}
+        ${(() => {
+          const as = altSpotOf(it);
+          if (!as || !(isEat(as) || it.snack)) return '';
+          const cafe = isSnackItem(it, as);
+          const title = it.snack
+            ? L('근처 카페 찾기', '近くのカフェを探す')
+            : cafe
+              ? L('웨이팅이 길면? 근처 다른 카페 보기', '待ちが長いときは? 近くのほかのカフェ')
+              : L('웨이팅이 길면? 근처 다른 식당 보기', '待ちが長いときは? 近くのほかのお店');
+          return `<button class="btn alt-btn wide" data-act="altSheet" data-uid="${it.uid}">${ic(cafe ? 'cafe' : 'food')}<span><b>${title}</b><small>${L('걸어서 갈 수 있는 곳 · 구글 지도에서 찾기', '歩いて行ける店 · Googleマップで探す')}</small></span>${ic('next', 'chev')}</button>`;
+        })()}
         <div class="ed"><span>머무는 시간</span><div class="stp"><button data-act="stay" data-uid="${it.uid}" data-n="-15" aria-label="15분 줄이기">${ic('minus')}</button><b>${dur(it.stay)}</b><button data-act="stay" data-uid="${it.uid}" data-n="15" aria-label="15분 늘리기">${ic('plus')}</button></div></div>
         <div class="ed"><span>순서</span><div class="stp"><button data-act="move" data-uid="${it.uid}" data-n="-1" ${i === 0 ? 'disabled' : ''} aria-label="앞으로">${ic('up')}</button><button data-act="move" data-uid="${it.uid}" data-n="1" aria-label="뒤로">${ic('down')}</button></div></div>
         ${N > 1 ? `<label class="ed"><span>다른 날로</span><select data-change="moveDay" data-uid="${it.uid}"><option value="">옮길 날 선택</option>${p.days.map((d, k) => (k === S.di ? '' : `<option value="${k}">${k + 1}일차 · ${mds(d.date)}</option>`)).join('')}</select></label>` : ''}

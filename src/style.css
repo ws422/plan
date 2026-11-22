@@ -5206,3 +5206,4 @@ html[lang='ja'] .kor {
   height: 16px;
   color: var(--ink-3);
 }
+.tag.meal.snack { background: var(--ok-2); color: var(--ok); }

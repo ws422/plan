@@ -678,6 +678,22 @@ function itemName(plan, it) {
       ? (h => `새 숙소에 짐 맡기기 · ${h.name || hotelWhere(h)}`)(nightHotel(plan, it.ni ?? 0))
       : it.n;
 }
+// 간식 시간 칸 (그 동네에 플래너가 아는 카페가 없을 때): 동네 가운데에 30분. 「근처 카페 찾기」로 실제 가게를 고를 수 있어요
+function snackItem(a) {
+  return {
+    uid: uid(),
+    n: '카페·디저트 타임',
+    a: a.id,
+    lat: a.lat,
+    lng: a.lng,
+    z: a.z,
+    cat: 'cafe',
+    meal: 'S',
+    snack: true,
+    stay: 30,
+    src: 'auto'
+  };
+}
 // 장소로 새 일정 칸 만들기
 function mkItem(sid, src) {
   const s = SPOT[sid];
@@ -755,6 +771,7 @@ function createPlan(set, areaIds) {
     const picks = pickSpots(plan, i, alloc[i]);
     day.items.push(
       ...picks.map(p => {
+        if (p.gen) return snackItem(p.gen);
         const it = mkItem(p.s.id, 'auto');
         if (p.meal) it.meal = p.meal;
         return it;
@@ -762,10 +779,35 @@ function createPlan(set, areaIds) {
     );
     reorderDay(plan, i, leadingFixed(day));
     trimDay(plan, i, leadingFixed(day));
+    snackFit(plan, i);
   });
   rebalance(plan);
   plan.days.forEach((d, i) => cleanModes(plan, i));
   return plan;
+}
+// 간식이 점심·저녁과 너무 붙으면(1시간 30분 안) 빼요. 플래너가 아는 카페면 간식 표시만 떼고 그대로 들러요
+function snackFit(plan, di) {
+  const c = computeDay(plan, di),
+    sn = c.rows.find(r => r.it.meal === 'S');
+  if (!sn) return;
+  const lunch = c.rows.find(r => r.it.meal === 'L'),
+    dinner = c.rows.find(r => r.it.meal === 'D');
+  const cramped = (dinner && dinner.arr - sn.dep < 90) || (lunch && sn.arr - lunch.dep < 90 && sn.arr > lunch.arr);
+  if (!cramped) return;
+  const day = plan.days[di];
+  if (sn.it.snack) day.items = day.items.filter(x => x !== sn.it);
+  else delete sn.it.meal;
+  // 간식 때문에 보류함으로 밀려난 곳이 있으면 다시 넣어 봐요
+  const fixed = leadingFixed(day);
+  for (const p of plan.parked.filter(x => x.fromDay === di && x.sid && x.reason.startsWith('시간'))) {
+    const snap = clone(day.items);
+    const { reason, fromDay, ...it } = p;
+    day.items.push(it);
+    reorderDay(plan, di, fixed);
+    if (computeDay(plan, di).over <= 0) plan.parked = plan.parked.filter(x => x.uid !== p.uid);
+    else day.items = snap;
+  }
+  cleanModes(plan, di);
 }
 // 맨 앞의 고정 칸 수 (짐 맡기기 등)
 function leadingFixed(day) {
@@ -844,27 +886,81 @@ function pickSpots(plan, i, areas) {
   const hasOuter = areas.some(a => a.z !== 'city');
   const meals = SPOTS.filter(s => s.meal && ok(s));
   const near = (pool, ref) => pool.slice().sort((x, y) => km(x, ref) - km(y, ref));
+  // 같은 메뉴가 이어지지 않게: 오늘 이미 고른 메뉴는 크게, 전날 먹은 메뉴는 조금, 그 전에 먹은 메뉴는 살짝 벌점
+  const menusOn = j =>
+    j < 0
+      ? []
+      : plan.days[j].items.filter(it => it.sid && (it.meal === 'L' || it.meal === 'D')).map(it => SPOT[it.sid].menu);
+  const today = [];
+  const dupPen = s => {
+    const m = s.menu;
+    if (!m) return 0;
+    let pen = today.includes(m) ? 100 : 0;
+    if (menusOn(i - 1).includes(m)) pen += 40;
+    for (let j = 0; j < i - 1; j++) pen += menusOn(j).filter(x => x === m).length * 12;
+    return pen;
+  };
+  // 후보 중 (기본 점수 - 메뉴 벌점)이 가장 높은 곳
+  const best = (pool, base) => {
+    let b = null,
+      bs = -Infinity;
+    pool.forEach((s, k) => {
+      const sc = base(s, k) - dupPen(s);
+      if (sc > bs) {
+        bs = sc;
+        b = s;
+      }
+    });
+    return b;
+  };
+  const takeMeal = (s, meal) => {
+    take(s, meal);
+    if (s.menu) today.push(s.menu);
+  };
   if (needL) {
     let pool = meals.filter(s => ids.has(s.a) && s.b !== 'n' && !s.pd);
     if (hasOuter && pool.some(s => s.z !== 'city')) pool = pool.filter(s => s.z !== 'city');
-    pool.sort((x, y) => y.p - x.p);
-    if (!pool.length && areas.length)
-      pool = near(
-        meals.filter(s => s.b !== 'n' && !s.pd && s.z === areas[0].z),
-        areas[0]
-      );
-    if (pool[0]) take(pool[0], 'L');
+    let base = s => s.p * 10;
+    if (!pool.length && areas.length) {
+      pool = meals.filter(s => s.b !== 'n' && !s.pd && s.z === areas[0].z);
+      base = s => -km(s, areas[0]) * 8;
+    }
+    const s = best(pool, base);
+    if (s) takeMeal(s, 'L');
   }
   if (needD) {
-    let pool = meals
-      .filter(s => ids.has(s.a) && ok(s))
-      .sort((x, y) => !!(y.b === 'n' || y.pd) - !!(x.b === 'n' || x.pd) || y.p - x.p);
+    let pool = meals.filter(s => ids.has(s.a) && ok(s)),
+      base = s => (s.b === 'n' || s.pd ? 60 : 0) + s.p * 10;
     if (!pool.length || hasOuter) {
       const hotel = hotelPt(dayHotel(plan, i));
       const cityPool = meals.filter(s => s.z === 'city' && (s.b === 'n' || s.pd) && ok(s));
-      if (!pool.length || !pool.some(s => s.z === 'city')) pool = near(cityPool, hotel);
+      if (!pool.length || !pool.some(s => s.z === 'city')) {
+        pool = cityPool;
+        base = s => -km(s, hotel) * 8;
+      }
     }
-    if (pool[0]) take(pool[0], 'D');
+    const s = best(pool, base);
+    if (s) takeMeal(s, 'D');
+  }
+  // 간식 시간 (오후 3~4시): 하루가 길고 여유가 있으면 그 동네 카페·디저트, 없으면 「카페·디저트 타임」 칸
+  const needS = s0 <= 840 && e0 >= 1080 && budget >= 200;
+  if (needS) {
+    const snack = SPOTS.filter(
+      s =>
+        ids.has(s.a) &&
+        ok(s) &&
+        (s.menu === 'cafe' || s.menu === 'sweet') &&
+        !(s.from && toMin(s.from) > 900) &&
+        !(s.to && toMin(s.to) < 1000)
+    ).sort((x, y) => y.p - x.p)[0];
+    if (snack) take(snack, 'S');
+    else {
+      const a = areas.filter(x => x.kind !== 'trip').sort((x, y) => y.min - x.min)[0];
+      if (a) {
+        picked.push({ gen: a, meal: 'S' });
+        budget -= 30 + 12;
+      }
+    }
   }
   const sum = areas.reduce((t, a) => t + a.min, 0) || 1;
   const B = budget;
@@ -893,6 +989,7 @@ function timePen(c, arr, ctx) {
   let p = 0;
   if (it.meal === 'L') p += outside(arr, 690, 810) * 1.2;
   else if (it.meal === 'D') p += outside(arr, 1080, 1200) * 1.2;
+  else if (it.meal === 'S') p += outside(arr, 870, 990) * 0.8;
   if (sp) {
     if (sp.from && arr < toMin(sp.from)) p += (toMin(sp.from) - arr) * 1.5;
     if (sp.b === 'n' && arr < 1080) p += (1080 - arr) * 0.8;
@@ -1038,7 +1135,7 @@ function mealsUsedBefore(plan, di, n) {
 }
 // 장소 우선순위 점수
 function pri(it) {
-  return it.sid ? SPOT[it.sid].p : 3;
+  return it.sid ? SPOT[it.sid].p : it.snack ? 1 : 3;
 }
 
 // fixedCount 이후의 일정을 다시 짠다
@@ -1112,8 +1209,11 @@ function trimDay(plan, di, fixedCount) {
     pool.sort((a, b) => pri(a.it) - pri(b.it) || b.it.stay - a.it.stay);
     const v = pool[0];
     day.items.splice(v.idx, 1);
-    park(plan, di, v.it, '시간이 부족해서 보류');
-    out.push({ n: itemName(plan, v.it), reason: '시간이 부족해서 보류' });
+    // 「카페·디저트 타임」 칸은 보류함에 넣지 않고 그냥 빼요
+    if (!v.it.snack) {
+      park(plan, di, v.it, '시간이 부족해서 보류');
+      out.push({ n: itemName(plan, v.it), reason: '시간이 부족해서 보류' });
+    }
     reorderDay(plan, di, fixedCount);
   }
   return out;
@@ -1321,6 +1421,7 @@ function bestSlot(plan, di, it) {
     // 시간이 틀리진 않지만 덜 좋은 자리: 식사 시간대 밖, 밤 명소를 너무 이르게, 하루가 넘침
     if (it.meal === 'L') pen += outside(r.arr, 690, 810) * 1.2;
     else if (it.meal === 'D') pen += outside(r.arr, 1080, 1200) * 1.2;
+    else if (it.meal === 'S') pen += outside(r.arr, 870, 990) * 0.8;
     if (s && s.b === 'n' && r.arr < 1050) pen += (1050 - r.arr) * 0.5;
     pen += Math.max(0, Math.max(0, c.over) - Math.max(0, base.over)) * 1.5;
     const add = c.endArr - base.endArr,

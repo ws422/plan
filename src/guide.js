@@ -187,7 +187,17 @@ function legPoints(p, di) {
     day = c.day;
   const startPt = { ...c.startPt },
     endPt = { ...c.endPt };
-  const pts = [startPt, ...c.rows.map(r => ({ ...r.p, sid: r.it.sid, name: itemName(p, r.it) })), endPt];
+  const pts = [
+    startPt,
+    ...c.rows.map(r => ({
+      ...r.p,
+      sid: r.it.sid,
+      name: itemName(p, r.it),
+      // 「카페·디저트 타임」은 가게가 정해지지 않았으니 일본어로는 「○○周辺」(그 동네)으로 보여요
+      ...(r.it.snack ? { snack: true, area: r.it.a, j: AREA_JA[r.it.a] ? AREA_JA[r.it.a] + '周辺' : '' } : {})
+    })),
+    endPt
+  ];
   pts[0].name = day.start.kind === 'airport' ? '공항' : '숙소';
   pts[pts.length - 1].name = day.end.kind === 'airport' ? '공항' : '숙소';
   return { c, pts };
@@ -303,6 +313,10 @@ function jaSheet(sh) {
     big = '福岡空港 国際線ターミナル';
     phrase = '福岡空港 国際線ターミナルまで お願いします';
     ko = '후쿠오카 공항 국제선 터미널';
+  } else if (B.snack) {
+    big = B.j || 'カフェ';
+    phrase = B.j ? `${B.j}まで お願いします` : 'この近くのカフェまで お願いします';
+    ko = L(`${AREA[B.area] ? AREA[B.area].n + ' 근처 ' : ''}카페`, `${B.j || ''}のカフェ`);
   } else if (!B.sid && (B.hotel || B.name === '숙소' || (B.j && /周辺/.test(B.j)))) {
     const hn = B.hn || '',
       readable = hn && !/[가-힣]/.test(hn);
@@ -321,5 +335,9 @@ function jaSheet(sh) {
   return `<div class="sh-h"><div><h2>일본어로 보여주기</h2><p>택시 기사님이나 역무원에게 이 화면을 보여 주세요.</p></div><button class="ib sm" data-act="closeSheet" aria-label="닫기">${ic('close')}</button></div>
     ${jaCardV({ label: `<small>목적지 · ${esc(ko)}</small>`, ja: `<div class="ja-big" lang="ja">${esc(big)}</div><p class="ja-ph" lang="ja">${esc(phrase)}</p>`, sub: `<p class="ja-ko">(${esc(ko)}까지 가 주세요)</p>` })}
     ${note ? `<p class="note">${ic('alert')}<span>${esc(note)}</span></p>` : ''}
-    <p class="note">${ic('spark')}<span>길을 물을 땐 「<span lang="ja">${esc(big)}はどこですか？</span>」 (○○는 어디예요?) 라고 보여 주세요.</span></p>`;
+    ${
+      B.snack
+        ? `<p class="note">${ic('spark')}<span>${L('카페를 찾을 땐 「<span lang="ja">この近くにカフェはありますか？</span>」 (이 근처에 카페 있어요?) 라고 보여 주세요.', 'カフェを探すときは「<span lang="ja">この近くにカフェはありますか？</span>」と見せてください。')}</span></p>`
+        : `<p class="note">${ic('spark')}<span>길을 물을 땐 「<span lang="ja">${esc(big)}はどこですか？</span>」 (○○는 어디예요?) 라고 보여 주세요.</span></p>`
+    }`;
 }
