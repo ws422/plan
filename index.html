@@ -5177,6 +5177,56 @@ html[lang='ja'] .kor {
   opacity: 0;
 }
 
+/* 보류함에서 다시 넣기: 시간이 맞는 날 */
+.note.warn {
+  background: var(--warn-2);
+}
+.note.warn > .ic {
+  color: var(--warn);
+}
+.up-days {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.up-day {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--sh);
+}
+.up-day b {
+  grid-row: 1 / 3;
+  font-size: 16px;
+}
+.up-day span {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.up-day small {
+  grid-column: 2;
+  font-size: 12.5px;
+  color: var(--ok);
+  font-weight: 700;
+}
+.up-day .chev {
+  grid-row: 1 / 3;
+  grid-column: 3;
+  width: 16px;
+  height: 16px;
+  color: var(--ink-3);
+}
+
 </style>
 </head>
 <body>
@@ -9048,28 +9098,87 @@ function applyWalk(plan, di, li, sids) {
 
 // 가장 덜 돌아가는 위치에 끼워 넣기
 function insertBest(plan, di, it) {
+  return insertSlot(plan, di, it).k;
+}
+// 하루에 장소를 넣을 가장 좋은 자리 찾기.
+// 자리마다 실제로 넣어 보고 계산해서, 문 닫은 뒤에 나오지 않고(마감 10분 여유) 문 열기 한참 전에 도착하지 않고,
+// 뒤에 있는 다른 장소도 마감을 넘기지 않는 자리 중에 가장 덜 돌아가는 곳을 골라요.
+// 돌려주는 값: { k: 자리, ok: 시간 문제 없음, why: 문제 목록, arr: 도착, dep: 나옴, add: 하루가 늘어나는 분, pushed: 마감을 넘기게 되는 다른 칸 }
+function bestSlot(plan, di, it) {
   const day = plan.days[di],
-    c = computeDay(plan, di),
-    p = itemPt(plan, it);
-  const pts = [c.startPt, ...c.rows.map(r => r.p), c.endPt];
-  let bi = day.items.length,
-    bc = Infinity;
-  const lo = leadingFixed(day);
-  for (let k = lo; k <= day.items.length; k++) {
-    const a = pts[k],
-      b = pts[k + 1];
-    const cost = bestOpt(a, p).min + bestOpt(p, b).min - bestOpt(a, b).min;
-    let pen = 0;
-    const s = it.sid && SPOT[it.sid];
-    if (s && s.b === 'n' && k < day.items.length) pen += 25;
-    if (cost + pen < bc) {
-      bc = cost + pen;
-      bi = k;
+    items = day.items,
+    lo = leadingFixed(day),
+    wd = weekday(day.date);
+  const s = it.sid && SPOT[it.sid];
+  const lateOf = c => {
+    const m = new Map();
+    c.rows.forEach(r => {
+      const x = r.it.sid && SPOT[r.it.sid];
+      if (x && x.to && r.dep > toMin(x.to) + 10) m.set(r.it.uid, r);
+    });
+    return m;
+  };
+  const base = computeDay(plan, di),
+    baseLate = lateOf(base);
+  const closedDay = !!(s && s.cl && s.cl.includes(wd));
+  let best = null;
+  for (let k = lo; k <= items.length; k++) {
+    let c;
+    day.items = [...items.slice(0, k), it, ...items.slice(k)];
+    try {
+      c = computeDay(plan, di);
+    } finally {
+      day.items = items;
     }
+    const r = c.rows.find(x => x.it === it);
+    if (!r) continue;
+    const why = [];
+    let pen = 0;
+    if (closedDay) why.push('closed');
+    if (s && s.to && r.dep > toMin(s.to) + 10) {
+      why.push('late');
+      pen += 300 + (r.dep - toMin(s.to)) * 3;
+    }
+    if (s && s.from && r.arr < toMin(s.from) - 15) {
+      why.push('early');
+      pen += 200 + (toMin(s.from) - r.arr) * 2;
+    }
+    const pushed = [...lateOf(c).values()].filter(x => x.it !== it && !baseLate.has(x.it.uid)).map(x => x.it);
+    if (pushed.length) {
+      why.push('push');
+      pen += 300 * pushed.length;
+    }
+    // 시간이 틀리진 않지만 덜 좋은 자리: 식사 시간대 밖, 밤 명소를 너무 이르게, 하루가 넘침
+    if (it.meal === 'L') pen += outside(r.arr, 690, 810) * 1.2;
+    else if (it.meal === 'D') pen += outside(r.arr, 1080, 1200) * 1.2;
+    if (s && s.b === 'n' && r.arr < 1050) pen += (1050 - r.arr) * 0.5;
+    pen += Math.max(0, Math.max(0, c.over) - Math.max(0, base.over)) * 1.5;
+    const add = c.endArr - base.endArr,
+      score = add + pen;
+    if (!best || score < best.score)
+      best = { k, score, ok: !why.length, why, arr: r.arr, dep: r.dep, add, over: Math.max(0, c.over), pushed };
   }
-  day.items.splice(bi, 0, it);
+  return (
+    best || { k: items.length, score: Infinity, ok: false, why: ['none'], arr: 0, dep: 0, add: 0, over: 0, pushed: [] }
+  );
+}
+// 가장 좋은 자리에 넣고, 그 자리 정보를 돌려줘요
+function insertSlot(plan, di, it) {
+  const b = bestSlot(plan, di, it);
+  plan.days[di].items.splice(b.k, 0, it);
   cleanModes(plan, di);
-  return bi;
+  return b;
+}
+// 자리 문제를 한 문장으로 (화면 안내용)
+function slotWhy(plan, di, it, b) {
+  const s = it.sid && SPOT[it.sid],
+    wd = weekday(plan.days[di].date);
+  if (b.why.includes('closed')) return `${WD[wd]}요일은 쉬는 날이에요`;
+  if (b.why.includes('late')) return `${fmt(b.arr)}에 도착해서 ${s.to}쯤 문 닫기 전에 다 못 봐요`;
+  if (b.why.includes('early')) return `${fmt(b.arr)}에 도착하는데 ${s.from}에 문을 열어요`;
+  if (b.why.includes('push'))
+    return `넣으면 ${b.pushed.map(x => itemName(plan, x)).join(', ')}이(가) 문 닫은 뒤에 도착해요`;
+  return '';
 }
 
 // ---- 교통비·패스 ----
@@ -9212,6 +9321,9 @@ if (typeof module !== 'undefined')
     reorderDay,
     trimDay,
     leadingFixed,
+    bestSlot,
+    insertSlot,
+    slotWhy,
     staysOf,
     nightHotel,
     hotelPt,
@@ -11609,20 +11721,6 @@ const A = {
     render();
     toast(`${itemName(S.plan, it)}을(를) 보류함으로 옮겼어요.`, true);
   },
-  unpark(d) {
-    const p = S.plan,
-      k = p.parked.findIndex(x => x.uid === d.uid);
-    if (k < 0) return;
-    pushUndo();
-    const [x] = p.parked.splice(k, 1);
-    const { reason, fromDay, ...it } = x;
-    it.src = 'user';
-    const pos = insertBest(p, S.di, it);
-    S.openParked = true;
-    dirty();
-    render();
-    toast(`${S.di + 1}일차 ${pos + 1}번째에 넣었어요.`, true);
-  },
   delParked(d) {
     pushUndo();
     S.plan.parked = S.plan.parked.filter(x => x.uid !== d.uid);
@@ -11643,12 +11741,16 @@ const A = {
     const p = S.plan;
     pushUndo();
     p.parked = p.parked.filter(x => x.sid !== d.id);
-    const pos = insertBest(p, S.di, mkItem(d.id, 'user'));
+    const it = mkItem(d.id, 'user'),
+      b = insertSlot(p, S.di, it);
     S.sheet.added.push(d.id);
     dirty();
     const list = document.getElementById('addList');
     if (list) list.innerHTML = addListHTML(S.sheet);
-    toast(`${SPOT[d.id].n}을(를) ${pos + 1}번째에 넣었어요.`, true);
+    toast(
+      b.ok ? `${SPOT[d.id].n}을(를) ${b.k + 1}번째에 넣었어요 · ${fmt(b.arr)} 도착` : slotToast(p, S.di, it, b),
+      true
+    );
   },
   addCustom() {
     const el = document.getElementById('cName'),
@@ -11781,11 +11883,16 @@ $app.addEventListener('change', e => {
     const [it] = day.items.splice(i, 1);
     it.fixed = false;
     cleanModes(p, S.di);
-    const pos = insertBest(p, to, it);
+    const b = insertSlot(p, to, it);
     dirty();
     S.sel = null;
     render();
-    toast(`${itemName(p, it)}을(를) ${to + 1}일차 ${pos + 1}번째로 옮겼어요.`, true);
+    toast(
+      b.ok
+        ? `${itemName(p, it)}을(를) ${to + 1}일차 ${b.k + 1}번째로 옮겼어요 · ${fmt(b.arr)} 도착`
+        : slotToast(p, to, it, b),
+      true
+    );
   }
 });
 let rzT;
@@ -13083,14 +13190,18 @@ Object.assign(A, {
     if (!p) return;
     pushUndo();
     p.parked = p.parked.filter(x => x.sid !== d.id);
-    const pos = insertBest(p, S.di, mkItem(d.id, 'user'));
+    const it = mkItem(d.id, 'user'),
+      b = insertSlot(p, S.di, it);
     dirty();
     if (S.sheet.back && S.sheet.back.type === 'add') {
       S.sheet.back.added = [...(S.sheet.back.added || []), d.id];
     }
     S.keepSheetScroll = true;
     render();
-    toast(`${SPOT[d.id].n}을(를) ${pos + 1}번째에 넣었어요.`, true);
+    toast(
+      b.ok ? `${SPOT[d.id].n}을(를) ${b.k + 1}번째에 넣었어요 · ${fmt(b.arr)} 도착` : slotToast(p, S.di, it, b),
+      true
+    );
   }
 });
 
@@ -13531,6 +13642,131 @@ Object.assign(A, {
       },
       name
     );
+  }
+});
+
+// ======================================================================
+// parked.js · 보류함에서 다시 넣기 (문 여는 시간 확인)
+// 보류함의 「N일차에 넣기」를 누르면, 그날 문 닫은 뒤에 도착하지 않는 자리를 찾아 넣어요.
+// 그런 자리가 없으면 이유를 보여 주고, 시간이 맞는 다른 날을 골라 넣을 수 있게 해요.
+// 장소 추가·다른 날로 옮기기도 같은 방식으로 자리를 찾고, 시간이 안 맞으면 알려 줘요.
+// 고치는 법: docs/수정가이드.md
+// ======================================================================
+
+// 장소 이름 (일본어 화면이면 일본어 이름)
+function slotName(p, it) {
+  return LANG === 'ja' && it.sid ? SPOT[it.sid].j : itemName(p, it);
+}
+// 자리 문제를 한 문장으로 (한국어·일본어)
+function slotWhyT(p, di, it, b) {
+  const s = it.sid && SPOT[it.sid],
+    wd = weekday(p.days[di].date);
+  if (b.why.includes('closed')) return L(`${WD[wd]}요일은 쉬는 날이에요`, `${WD[wd]}曜日は定休日です`);
+  if (b.why.includes('late'))
+    return L(
+      `${fmt(b.arr)}에 도착해서 ${s.to}쯤 문 닫기 전에 다 못 봐요`,
+      `${fmt(b.arr)}着で、${s.to}ごろの閉店までに回りきれません`
+    );
+  if (b.why.includes('early'))
+    return L(`${fmt(b.arr)}에 도착하는데 ${s.from}에 문을 열어요`, `${fmt(b.arr)}着ですが、開店は${s.from}です`);
+  if (b.why.includes('push')) {
+    const n = b.pushed.map(x => slotName(p, x)).join(', ');
+    return L(`넣으면 ${n}이(가) 문 닫은 뒤에 도착해요`, `入れると「${n}」が閉まった後の到着になります`);
+  }
+  return '';
+}
+// 시간이 맞는 다른 날 (가장 덜 늘어나는 순)
+function slotOtherDays(p, it, skip) {
+  return p.days
+    .map((d, j) => (j === skip ? null : { j, b: bestSlot(p, j, it) }))
+    .filter(o => o && o.b.ok)
+    .sort((a, b) => a.b.score - b.b.score);
+}
+// 넣은 뒤 알림: 시간이 안 맞으면 이유 + 맞는 날
+function slotToast(p, di, it, b) {
+  if (b.ok)
+    return L(
+      `${di + 1}일차 ${b.k + 1}번째에 넣었어요 · ${fmt(b.arr)} 도착`,
+      `${di + 1}日目の${b.k + 1}番目に入れました · ${fmt(b.arr)}着`
+    );
+  const alt = slotOtherDays(p, it, di)[0];
+  return (
+    L(
+      `${di + 1}일차에 넣었지만 ${slotWhyT(p, di, it, b)}.`,
+      `${di + 1}日目に入れましたが、${slotWhyT(p, di, it, b)}。`
+    ) + (alt ? L(` ${alt.j + 1}일차가 시간이 맞아요.`, ` ${alt.j + 1}日目なら時間が合います。`) : '')
+  );
+}
+// 보류함 칸 → 일정 칸
+function parkedToItem(x) {
+  const { reason, fromDay, ...it } = x;
+  it.src = 'user';
+  return it;
+}
+// 보류함에서 꺼내 di일차에 넣기 (자리는 그날 가장 좋은 곳)
+function doUnpark(uid, di) {
+  const p = S.plan,
+    k = p.parked.findIndex(x => x.uid === uid);
+  if (k < 0) return;
+  pushUndo();
+  const [x] = p.parked.splice(k, 1),
+    it = parkedToItem(x);
+  const b = insertSlot(p, di, it);
+  S.di = di;
+  S.openParked = true;
+  S.sheet = null;
+  dirty();
+  render();
+  toast(slotToast(p, di, it, b), true);
+}
+// 시트: 이 날엔 시간이 안 맞아요 → 다른 날 고르기
+function unparkSheetV(sh) {
+  const p = S.plan,
+    x = p && p.parked.find(y => y.uid === sh.uid);
+  if (!x)
+    return (
+      shHead(L('보류함', '保留'), '') +
+      `<p class="note">${ic('alert')}<span>${L('이 장소를 찾을 수 없어요.', 'この場所が見つかりません。')}</span></p>`
+    );
+  const it = parkedToItem(x),
+    here = bestSlot(p, S.di, it),
+    others = slotOtherDays(p, it, S.di),
+    name = esc(slotName(p, it));
+  const list = others.length
+    ? `<h3 class="sec"><span>${L('시간이 맞는 날', '時間が合う日')}</span></h3><ul class="up-days">${others
+        .map(
+          o =>
+            `<li><button class="up-day" data-act="unparkTo" data-uid="${x.uid}" data-di="${o.j}"><b>${L(`${o.j + 1}일차`, `${o.j + 1}日目`)}</b><span>${mds(p.days[o.j].date)}</span><small>${L(`${fmt(o.b.arr)} 도착 · ${o.b.k + 1}번째`, `${fmt(o.b.arr)}着 · ${o.b.k + 1}番目`)}</small>${ic('next', 'chev')}</button></li>`
+        )
+        .join('')}</ul>`
+    : `<p class="note">${ic('clock')}<span>${L('어느 날에도 문 여는 시간 안에 넣을 자리가 없어요. 그날 다른 장소를 빼거나 하루 마무리 시간을 늦춰 보세요.', 'どの日も営業時間内に入れられる場所がありません。その日のほかの場所を外すか、1日の終了時間を遅らせてみてください。')}</span></p>`;
+  return (
+    shHead(
+      L(`${name} 다시 넣기`, `${name}を戻す`),
+      L(`${S.di + 1}일차엔 시간이 안 맞아요.`, `${S.di + 1}日目は時間が合いません。`)
+    ) +
+    `<p class="note warn">${ic('alert')}<span>${esc(slotWhyT(p, S.di, it, here))}</span></p>` +
+    list +
+    `<div class="sh-foot col"><button class="btn soft" data-act="unparkTo" data-uid="${x.uid}" data-di="${S.di}">${L(`그래도 ${S.di + 1}일차에 넣기`, `それでも${S.di + 1}日目に入れる`)}</button><button class="btn soft" data-act="closeSheet">${L('보류함에 그대로 두기', '保留のままにする')}</button></div>`
+  );
+}
+SHEETS.unpark = unparkSheetV;
+SHEET_LABEL.unpark = '보류함';
+Object.assign(A, {
+  // 보류함의 「N일차에 넣기」: 시간이 맞으면 바로 넣고, 안 맞으면 시트로
+  unpark(d) {
+    const p = S.plan,
+      x = p.parked.find(y => y.uid === d.uid);
+    if (!x) return;
+    const b = bestSlot(p, S.di, parkedToItem(x));
+    if (b.ok) doUnpark(d.uid, S.di);
+    else {
+      S.sheet = { type: 'unpark', uid: d.uid };
+      render();
+    }
+  },
+  unparkTo(d) {
+    doUnpark(d.uid, Number(d.di));
   }
 });
 
