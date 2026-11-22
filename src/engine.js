@@ -1374,7 +1374,8 @@ function insertBest(plan, di, it) {
 // 자리마다 실제로 넣어 보고 계산해서, 문 닫은 뒤에 나오지 않고(마감 10분 여유) 문 열기 한참 전에 도착하지 않고,
 // 뒤에 있는 다른 장소도 마감을 넘기지 않는 자리 중에 가장 덜 돌아가는 곳을 골라요.
 // 돌려주는 값: { k: 자리, ok: 시간 문제 없음, why: 문제 목록, arr: 도착, dep: 나옴, add: 하루가 늘어나는 분, pushed: 마감을 넘기게 되는 다른 칸 }
-function bestSlot(plan, di, it) {
+// kMax: 이 자리까지만 봐요 (없으면 맨 뒤까지)
+function bestSlot(plan, di, it, kMax) {
   const day = plan.days[di],
     items = day.items,
     lo = leadingFixed(day),
@@ -1392,7 +1393,7 @@ function bestSlot(plan, di, it) {
     baseLate = lateOf(base);
   const closedDay = !!(s && s.cl && s.cl.includes(wd));
   let best = null;
-  for (let k = lo; k <= items.length; k++) {
+  for (let k = lo; k <= Math.min(items.length, kMax ?? items.length); k++) {
     let c;
     day.items = [...items.slice(0, k), it, ...items.slice(k)];
     try {
@@ -1434,8 +1435,8 @@ function bestSlot(plan, di, it) {
   );
 }
 // 가장 좋은 자리에 넣고, 그 자리 정보를 돌려줘요
-function insertSlot(plan, di, it) {
-  const b = bestSlot(plan, di, it);
+function insertSlot(plan, di, it, kMax) {
+  const b = bestSlot(plan, di, it, kMax);
   plan.days[di].items.splice(b.k, 0, it);
   cleanModes(plan, di);
   return b;

@@ -557,7 +557,7 @@ function itemRow(p, r, i, N) {
     <div class="sc">
       <div class="sc-row"><button class="sc-hit" data-act="sel" data-uid="${it.uid}" aria-expanded="${sel}">
         ${s ? catTile(s.c) : catTile(it.cat || (it.place === 'hotel' ? 'bed' : 'free'))}
-        <span class="sc-t"><b>${esc(itemName(p, it))}</b><small>${s ? `${CATS[s.c].n} · ` : ''}${dur(it.stay)} 머묾${s && s.j ? ` · <span lang="ja">${esc(s.j)}</span>` : ''}</small></span>
+        <span class="sc-t"><b>${esc(itemName(p, it))}</b><small>${s ? `${CATS[s.c].n} · ` : ''}${dur(it.stay)} 머묾${s && s.j ? ` · <span lang="ja">${esc(s.j)}</span>` : ''}${whereLabel(it) ? ` · ${esc(whereLabel(it))}` : ''}</small></span>
         <span class="num">${i + 1}</span>
       </button>${N2 > 1 ? `<button type="button" class="drag-h" data-uid="${it.uid}" aria-label="${esc(L(`${itemName(p, it)} 순서 바꾸기 (끌거나 위아래 화살표)`, `${s ? s.j : trText(itemName(p, it))} の順番を変える(ドラッグか上下キー)`))}">${ic('grip')}</button>` : ''}</div>
       ${tags ? `<div class="tags">${tags}</div>` : ''}
@@ -584,6 +584,7 @@ function itemRow(p, r, i, N) {
         <label class="ed col"><span>메모</span><input type="text" id="memo-${it.uid}" data-input="memo" data-uid="${it.uid}" value="${esc(it.memo || '')}" placeholder="예약 번호, 먹고 싶은 메뉴" maxlength="120"></label>
         <div class="row2"><button class="btn soft" data-act="replanHere" data-uid="${it.uid}">${ic('shuffle')}여기부터 다시 짜기</button><button class="btn soft" data-act="toPark" data-uid="${it.uid}">${ic('box')}보류함으로</button></div>
         ${s ? `<button class="btn soft wide" data-act="spotSheet" data-id="${s.id}">${ic('info')}장소 정보·가는 법 보기</button>` : ''}
+        ${it.custom ? `<button class="btn soft wide" data-act="whereSheet" data-uid="${it.uid}">${ic('pin')}${L('위치 바꾸기', '場所を変える')}<small class="wh-cur">${esc(whereLabel(it) || L('정해지지 않음', '未設定'))}</small></button>` : ''}
       </div>`
           : ''
       }
@@ -892,11 +893,7 @@ function addSheet(sh) {
     <label class="search">${ic('search')}<span class="sr">장소 검색</span><input id="addQ" data-input="addQ" value="${esc(sh.q)}" placeholder="이름·동네·종류 (예: 라멘, 텐진)"></label>
     <div class="chips-sel scroll">${[['all', '전체'], ...Object.entries(CATS).map(([k, v]) => [k, v.n])].map(([k, v]) => `<button class="${sh.cat === k ? 'on' : ''}" data-act="addCat" data-v="${k}">${v}</button>`).join('')}</div>
     <div class="add-list" id="addList">${addListHTML(sh)}</div>
-    <details class="card custom"><summary>${ic('pin')}목록에 없는 일정 직접 넣기${ic('down', 'chev')}</summary>
-      <div class="grid2"><label class="fld"><span>이름</span><input id="cName" maxlength="30" placeholder="예: 호텔에서 쉬기"></label>
-      <label class="fld"><span>시간</span><select id="cStay">${[15, 30, 45, 60, 90, 120, 180].map(m => `<option value="${m}"${m === 60 ? ' selected' : ''}>${dur(m)}</option>`).join('')}</select></label></div>
-      <button class="btn pri" data-act="addCustom">${ic('plus')}마지막에 넣기</button>
-    </details>`;
+    ${customFormV()}`;
 }
 // 장소 추가 목록
 function addListHTML(sh) {
@@ -1445,35 +1442,6 @@ const A = {
       true
     );
   },
-  addCustom() {
-    const el = document.getElementById('cName'),
-      name = (el.value || '').trim();
-    if (!name) {
-      el.focus();
-      toast('이름을 적어 주세요.');
-      return;
-    }
-    const stay = Number(document.getElementById('cStay').value),
-      p = S.plan,
-      c = computeDay(p, S.di),
-      at = c.rows.length ? c.rows[c.rows.length - 1].p : c.startPt;
-    pushUndo();
-    p.days[S.di].items.push({
-      uid: uid(),
-      n: name,
-      lat: at.lat,
-      lng: at.lng,
-      z: at.z,
-      stay,
-      src: 'user',
-      custom: true
-    });
-    cleanModes(p, S.di);
-    dirty();
-    S.sheet = null;
-    render();
-    toast(`'${name}'을(를) 마지막에 넣었어요.`, true);
-  },
   dayTime() {
     S.sheet = { type: 'dayTime' };
     render();
@@ -1575,6 +1543,7 @@ $app.addEventListener('change', e => {
     pushUndo();
     const [it] = day.items.splice(i, 1);
     it.fixed = false;
+    if (it.custom && it.place === 'hotel') it.ni = hotelNi(p, to); // 「숙소」로 정한 칸은 옮긴 날의 숙소로
     cleanModes(p, S.di);
     const b = insertSlot(p, to, it);
     dirty();

@@ -222,6 +222,12 @@ Object.assign(A, {
         it.z = s.z;
         it.cat = s.c;
         it.custom = true;
+        // 위치: 간식 칸이었으면 그 동네, 아니면 원래 가게 근처
+        if (it.snack && it.a) it.wh = 'a:' + it.a;
+        else {
+          it.wh = 'near';
+          it.whn = s.n;
+        }
         delete it.sid;
         delete it.snack;
         delete it.a;

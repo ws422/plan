@@ -194,7 +194,15 @@ function legPoints(p, di) {
       sid: r.it.sid,
       name: itemName(p, r.it),
       // 「카페·디저트 타임」은 가게가 정해지지 않았으니 일본어로는 「○○周辺」(그 동네)으로 보여요
-      ...(r.it.snack ? { snack: true, area: r.it.a, j: AREA_JA[r.it.a] ? AREA_JA[r.it.a] + '周辺' : '' } : {})
+      ...(r.it.snack ? { snack: true, area: r.it.a, j: AREA_JA[r.it.a] ? AREA_JA[r.it.a] + '周辺' : '' } : {}),
+      // 직접 넣은 일정: 동네로 정했으면 「○○周辺」, 좌표면 일본어 이름이 없어요
+      ...(r.it.custom && r.it.place !== 'hotel'
+        ? {
+            custom: true,
+            j:
+              r.it.wh && r.it.wh.startsWith('a:') && AREA_JA[r.it.wh.slice(2)] ? AREA_JA[r.it.wh.slice(2)] + '周辺' : ''
+          }
+        : {})
     })),
     endPt
   ];
@@ -317,6 +325,16 @@ function jaSheet(sh) {
     big = B.j || 'カフェ';
     phrase = B.j ? `${B.j}まで お願いします` : 'この近くのカフェまで お願いします';
     ko = L(`${AREA[B.area] ? AREA[B.area].n + ' 근처 ' : ''}카페`, `${B.j || ''}のカフェ`);
+  } else if (B.custom) {
+    big = B.j || 'この場所';
+    phrase = B.j ? `${B.j}まで お願いします` : 'この場所まで お願いします';
+    ko = B.name;
+    note = B.j
+      ? L(
+          '동네까지만 안내하는 문장이에요. 정확한 주소나 구글 지도 위치를 함께 보여 주세요.',
+          'エリアまでの案内です。正確な住所かGoogleマップの場所もあわせて見せてください。'
+        )
+      : L('구글 지도에서 이 위치를 열어 함께 보여 주세요.', 'Googleマップでこの場所を開いて一緒に見せてください。');
   } else if (!B.sid && (B.hotel || B.name === '숙소' || (B.j && /周辺/.test(B.j)))) {
     const hn = B.hn || '',
       readable = hn && !/[가-힣]/.test(hn);
