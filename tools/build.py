@@ -198,7 +198,11 @@ def main():
         for f in ICONS:
             shutil.copy(os.path.join(ROOT, 'icons', f), os.path.join(out, 'icons', f))
     app = page(js, css, True)
-    ver = hashlib.sha1(app.encode('utf8')).hexdigest()[:10]
+    # 버전: 앱 코드 + 아이콘 파일. 아이콘만 바꿔도 버전이 바뀌어서 설치된 앱이 새 아이콘을 받아요
+    h = hashlib.sha1(app.encode('utf8'))
+    for f in ICONS:
+        h.update(open(os.path.join(ROOT, 'icons', f), 'rb').read())
+    ver = h.hexdigest()[:10]
     shell = ['./', './index.html', './manifest.webmanifest'] + [f'./icons/{f}' for f in ICONS] + [f'./photos/{f}' for f in photos]
     open(os.path.join(out, 'index.html'), 'w', encoding='utf8').write(app)
     open(os.path.join(out, 'sw.js'), 'w', encoding='utf8').write(service_worker(ver, shell))
